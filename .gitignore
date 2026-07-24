@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.DS_Store
+
+# scratch dirs used when cloning SWE-bench instances / writing predictions
+/workdirs/
+*.jsonl
