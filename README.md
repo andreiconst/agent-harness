@@ -206,6 +206,7 @@ python scripts/evaluate.py --predictions_path preds.jsonl \
 ## Status
 
 This is boilerplate: the loop and tools work end-to-end on a single instance,
-but there's no batching, no environment setup beyond a plain `git checkout`,
-and no self-correction beyond "keep calling tools until the model stops." See
+and `--docker` gets the agent a real per-instance environment when it needs
+one. Still missing: batching across a full split, and self-correction beyond
+"keep calling tools until the model calls `submit`." See
 [docs/ROADMAP.md](docs/ROADMAP.md) for what's next.

@@ -12,3 +12,5 @@ dist/
 # scratch dirs used when cloning SWE-bench instances / writing predictions
 /workdirs/
 *.jsonl
+
+logs*
