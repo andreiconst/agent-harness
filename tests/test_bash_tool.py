@@ -30,6 +30,38 @@ def test_nonzero_exit_code_is_reported():
         bash.stop()
 
 
+def test_long_output_is_truncated_at_both_ends():
+    bash = BashTool(timeout=10)
+    head_marker, tail_marker = "HEAD_MARKER", "TAIL_MARKER"
+    filler = "x" * 5000
+    output = bash._truncate_output(f"{head_marker}{filler}{tail_marker}")
+    assert head_marker in output
+    assert tail_marker in output
+    assert "chars omitted" in output
+
+
+def test_pytest_output_keeps_the_tail_over_the_banner():
+    # The banner is longer than the default head budget, so an even split
+    # would spend the whole head on it and truncate the summary line away.
+    bash = BashTool(timeout=10)
+    banner = "test session starts\n" + "platform linux -- plugins: many\n" * 60
+    body = "collected 12 items\n" + "some_test PASSED\n" * 100 + "12 passed in 0.15s"
+    output = bash._truncate_output(banner + body)
+
+    assert "12 passed in 0.15s" in output
+    assert "collected 12 items" in output
+    # Same total budget as any other command, just divided differently.
+    head, tail = bash._split_budget(banner + body)
+    assert head + tail == bash._HEAD_CHARS + bash._TAIL_CHARS
+    assert head < bash._HEAD_CHARS
+
+
+def test_non_pytest_output_keeps_the_even_split():
+    bash = BashTool(timeout=10)
+    head, tail = bash._split_budget("a build log with no test run in it")
+    assert (head, tail) == (bash._HEAD_CHARS, bash._TAIL_CHARS)
+
+
 def test_init_commands_run_before_first_user_command_and_persist():
     # e.g. `conda activate testbed` in --docker mode: must complete before
     # any real command runs, its own output must not leak into the first

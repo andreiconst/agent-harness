@@ -34,6 +34,15 @@ def main() -> None:
         "--quiet", action="store_true", help="don't print each step as the agent runs"
     )
     parser.add_argument(
+        "--log",
+        default=None,
+        help=(
+            "also write the full run to this file — untruncated tool calls and "
+            "results, unlike the terminal. Works with --quiet, and is written as "
+            "the run goes, so a crashed run still leaves everything up to the crash"
+        ),
+    )
+    parser.add_argument(
         "--docker",
         action="store_true",
         help=(
@@ -49,6 +58,15 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    # Line-buffered so the log survives a crash mid-run.
+    log_file = open(args.log, "w", buffering=1) if args.log else None
+
+    def report(line: str = "") -> None:
+        """Print, and mirror into the same log the agent is writing to."""
+        print(line)
+        if log_file:
+            log_file.write(line + "\n")
+
     instance = get_instance(args.instance_id, split=args.split, dataset=args.dataset)
 
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="agent-harness-"))
@@ -61,6 +79,17 @@ def main() -> None:
         repo_path = docker_env.repo_path
     else:
         repo_path = prepare_repo(instance, workdir)
+        # `prepare_repo` only checks out source — it installs nothing. Without
+        # the instance's real environment the agent cannot run the test suite
+        # at all, and burns its whole budget on pip and conftest archaeology
+        # instead of on the bug. That failure is invisible in the transcript
+        # until you read 20 turns of it, so say it up front.
+        report(
+            "WARNING: running without --docker. The repo is a bare checkout with no "
+            "dependencies installed, so the test suite will almost certainly not run "
+            "and the agent will spend its turns trying to build an environment. Use "
+            "--docker for a meaningful run."
+        )
 
     agent = Agent(
         cwd=str(repo_path),
@@ -69,6 +98,7 @@ def main() -> None:
         container=docker_env.container_name if docker_env else None,
         container_workdir=docker_env.container_workdir if docker_env else "/testbed",
         bash_init_commands=docker_env.bash_init_commands if docker_env else None,
+        log_file=log_file,
     )
     task = f"{instance['problem_statement']}\n\nRepository: {instance['repo']}"
     result = agent.run(task)
@@ -82,9 +112,18 @@ def main() -> None:
     save_transcript(result.messages, transcript_path)
 
     status = f"submitted: {result.summary}" if result.submitted else "did not call submit"
-    print(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason}, {status} ---")
-    print(patch or "(no changes made)")
-    print(
+    report(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason}, {status} ---")
+    if result.verified_turn is not None:
+        tail = result.turns - result.verified_turn
+        report(f"verified green on turn {result.verified_turn}; {tail} turn(s) spent after that")
+    if agent.diff_was_restored:
+        report(
+            "WARNING: the working tree was empty at the end of the run — submitting the "
+            "last non-empty diff instead. The agent likely left a `git stash`/`checkout`/"
+            "`reset` unreverted."
+        )
+    report(patch or "(no changes made)")
+    report(
         f"\nusage: input={result.input_tokens} "
         f"cache_read={result.cache_read_input_tokens} "
         f"cache_creation={result.cache_creation_input_tokens} "
@@ -92,12 +131,12 @@ def main() -> None:
     )
     total_input = result.input_tokens + result.cache_read_input_tokens + result.cache_creation_input_tokens
     if total_input:
-        print(f"cache hit rate: {result.cache_read_input_tokens / total_input:.0%} of input tokens served from cache")
-    print(f"\nrepo checkout: {repo_path}")
-    print(f"full trajectory: {transcript_path}")
-    print(f"(view it with: python scripts/show_transcript.py {transcript_path})")
+        report(f"cache hit rate: {result.cache_read_input_tokens / total_input:.0%} of input tokens served from cache")
+    report(f"\nrepo checkout: {repo_path}")
+    report(f"full trajectory: {transcript_path}")
+    report(f"(view it with: python scripts/show_transcript.py {transcript_path})")
     if docker_env and args.keep_container:
-        print(f"container kept running: {docker_env.container_name}")
+        report(f"container kept running: {docker_env.container_name}")
 
     if args.output:
         prediction = {
@@ -107,7 +146,11 @@ def main() -> None:
         }
         with open(args.output, "a") as f:
             f.write(json.dumps(prediction) + "\n")
-        print(f"appended prediction to {args.output}")
+        report(f"appended prediction to {args.output}")
+
+    if log_file:
+        log_file.close()
+        print(f"full run log: {args.log}")
 
 
 if __name__ == "__main__":

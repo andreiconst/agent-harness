@@ -26,6 +26,16 @@ class BashTool:
     _HEAD_CHARS = 1500
     _TAIL_CHARS = 1500
 
+    # pytest opens with a long, near-constant banner (platform, interpreter,
+    # every installed package and plugin) before the first useful line; on
+    # some projects — astropy prints its own header on top — that alone
+    # exceeds the head budget, so an unbiased split spends the whole head on
+    # boilerplate and then truncates away the test names. Everything worth
+    # reading (failures, the summary line) is at the end, so give pytest
+    # output a much smaller head. The total budget is unchanged.
+    _PYTEST_HEAD_CHARS = 400
+    _PYTEST_MARKER = "test session starts"
+
     def __init__(
         self,
         cwd: str | None = None,
@@ -86,10 +96,19 @@ class BashTool:
             self._proc.terminate()
         self._proc = None
 
+    def _split_budget(self, output: str) -> tuple[int, int]:
+        """How to divide the fixed char budget between the head and the tail."""
+        limit = self._HEAD_CHARS + self._TAIL_CHARS
+        if self._PYTEST_MARKER in output:
+            return self._PYTEST_HEAD_CHARS, limit - self._PYTEST_HEAD_CHARS
+        return self._HEAD_CHARS, self._TAIL_CHARS
+
     def _truncate_output(self, output: str) -> str:
         limit = self._HEAD_CHARS + self._TAIL_CHARS
         if len(output) <= limit:
             return output
+
+        head_chars, tail_chars = self._split_budget(output)
 
         with tempfile.NamedTemporaryFile(
             mode="w", suffix=".log", prefix="agent-harness-bash-", delete=False
@@ -99,10 +118,10 @@ class BashTool:
 
         omitted = len(output) - limit
         return (
-            output[: self._HEAD_CHARS]
+            output[:head_chars]
             + f"\n\n... [{omitted} chars omitted — full output saved to {log_path}; "
             + "use bash (e.g. sed -n, grep, tail) to inspect it if needed] ...\n\n"
-            + output[-self._TAIL_CHARS :]
+            + output[-tail_chars:]
         )
 
     def _run_raw(self, command: str) -> tuple[str, str | None]:
