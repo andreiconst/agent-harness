@@ -28,3 +28,15 @@ def test_nonzero_exit_code_is_reported():
         assert "[exit code: 1]" in output
     finally:
         bash.stop()
+
+
+def test_init_commands_run_before_first_user_command_and_persist():
+    # e.g. `conda activate testbed` in --docker mode: must complete before
+    # any real command runs, its own output must not leak into the first
+    # real command's result, and its effect (env activation) must persist.
+    bash = BashTool(timeout=10, init_commands=["export FOO=from_init"])
+    try:
+        output = bash.run("echo $FOO")
+        assert output.strip().startswith("from_init")
+    finally:
+        bash.stop()

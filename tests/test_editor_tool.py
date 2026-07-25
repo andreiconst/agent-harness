@@ -43,3 +43,36 @@ def test_unknown_command_raises(tmp_path):
         assert False, "expected a ValueError for an unsupported command"
     except ValueError:
         pass
+
+
+def test_container_workdir_remaps_container_absolute_paths(tmp_path):
+    # In --docker mode, `cwd` is a host directory bind-mounted into a
+    # container at `container_workdir`. The model explores via `bash`
+    # (which runs inside the container) and naturally passes back
+    # container-absolute paths like "/testbed/a.py" — those must resolve
+    # onto the host directory, not fail as "not found" against the host's
+    # real filesystem where /testbed doesn't exist.
+    editor = EditorTool(cwd=tmp_path, container_workdir="/testbed")
+    editor.run(command="create", path="/testbed/a.py", file_text="x = 1\n")
+    assert (tmp_path / "a.py").read_text() == "x = 1\n"
+
+    view = editor.run(command="view", path="/testbed/a.py")
+    assert "1\tx = 1" in view
+
+    editor.run(command="str_replace", path="/testbed/a.py", old_str="x = 1", new_str="x = 2")
+    assert (tmp_path / "a.py").read_text() == "x = 2\n"
+
+    # The bare workdir itself (no trailing path) should resolve to `cwd`.
+    listing = editor.run(command="view", path="/testbed")
+    assert "a.py" in listing
+
+
+def test_container_workdir_prefix_match_is_exact_not_substring(tmp_path):
+    # "/testbed-other/..." merely shares a string prefix with "/testbed" —
+    # it must NOT be remapped onto `cwd`, only an exact "/testbed" or a
+    # "/testbed/..." path should be.
+    from pathlib import Path
+
+    editor = EditorTool(cwd=tmp_path, container_workdir="/testbed")
+    assert editor._resolve("/testbed-other/b.py") == Path("/testbed-other/b.py")
+    assert editor._resolve("/testbed/b.py") == tmp_path / "b.py"

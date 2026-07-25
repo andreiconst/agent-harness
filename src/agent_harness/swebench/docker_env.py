@@ -38,6 +38,8 @@ NAMESPACE = "swebench"  # matches run_evaluation.py's own default
 class DockerEnv:
     container_name: str
     repo_path: Path
+    container_workdir: str
+    bash_init_commands: list[str]
     client: docker.DockerClient
 
     def cleanup(self) -> None:
@@ -46,6 +48,23 @@ class DockerEnv:
             container.remove(force=True)
         except docker.errors.NotFound:
             pass
+
+
+def _bash_init_commands(test_spec) -> list[str]:
+    """Extract the "activate this instance's environment" lines.
+
+    `env_script_list` mixes one-time build steps (creating the conda env,
+    pip-installing deps — already baked into the image) with the couple of
+    lines needed on every invocation to activate that env. The real SWE-bench
+    eval script re-runs exactly these same lines before every test run, so we
+    do the same rather than hardcoding a path/env-manager assumption that
+    might not hold for every repo.
+    """
+    return [
+        line
+        for line in test_spec.env_script_list
+        if line.startswith("source ") or line.startswith("conda activate")
+    ]
 
 
 def provision_container(instance: dict, workdir: Path) -> DockerEnv:
@@ -85,4 +104,10 @@ def provision_container(instance: dict, workdir: Path) -> DockerEnv:
         cap_add=cap_add,
         volumes={str(repo_path.resolve()): {"bind": DOCKER_WORKDIR, "mode": "rw"}},
     )
-    return DockerEnv(container_name=container.name, repo_path=repo_path, client=client)
+    return DockerEnv(
+        container_name=container.name,
+        repo_path=repo_path,
+        container_workdir=DOCKER_WORKDIR,
+        bash_init_commands=_bash_init_commands(test_spec),
+        client=client,
+    )

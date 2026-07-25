@@ -14,8 +14,18 @@ class EditorTool:
     name = "str_replace_based_edit_tool"
     tool_type = "text_editor_20250728"
 
-    def __init__(self, cwd: str | Path | None = None):
+    def __init__(self, cwd: str | Path | None = None, container_workdir: str | None = None):
         self._cwd = Path(cwd) if cwd else Path.cwd()
+        # When set, an absolute path starting with this prefix is remapped
+        # onto `cwd` instead of being looked up literally. This matters when
+        # `cwd` is a host directory bind-mounted into a container at
+        # `container_workdir` (see docker_env.py): the model explores via
+        # `bash`, which runs *inside* the container and sees paths like
+        # `/testbed/foo.py`, so it naturally passes that same absolute path
+        # to this tool too — but this tool operates on the host filesystem,
+        # where `/testbed` doesn't exist. Without the remap, every absolute
+        # path the model has actually seen fails with "No such file".
+        self._container_workdir = container_workdir.rstrip("/") if container_workdir else None
 
     def run(self, command: str, path: str, **kwargs) -> str:
         p = self._resolve(path)
@@ -30,6 +40,9 @@ class EditorTool:
         raise ValueError(f"unknown editor command: {command!r}")
 
     def _resolve(self, path: str) -> Path:
+        if self._container_workdir and (path == self._container_workdir or path.startswith(self._container_workdir + "/")):
+            relative = path[len(self._container_workdir) :].lstrip("/")
+            return self._cwd / relative if relative else self._cwd
         p = Path(path)
         return p if p.is_absolute() else self._cwd / p
 

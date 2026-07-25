@@ -75,17 +75,28 @@ class Agent:
         client: Anthropic | None = None,
         verbose: bool = True,
         container: str | None = None,
+        container_workdir: str = "/testbed",
+        bash_init_commands: list[str] | None = None,
     ):
         self.cwd = cwd
         self.model = model
         self.max_turns = max_turns
         self.client = client or get_client()
         # `container`, if set, is a running Docker container name — bash
-        # commands execute inside it via `docker exec` (see docker_env.py),
-        # while the editor still operates on `cwd`, which is expected to be
-        # that same container's filesystem bind-mounted onto the host.
-        self.bash = BashTool(cwd=cwd, container=container)
-        self.editor = EditorTool(cwd=cwd)
+        # commands execute inside it via `docker exec` (see docker_env.py).
+        # `cwd` is expected to be that same container's filesystem
+        # bind-mounted onto the host at `container_workdir`: the editor
+        # operates on the host path directly, but also needs
+        # `container_workdir` so it can remap the container-absolute paths
+        # the model naturally uses (since it explored via `bash`, which runs
+        # *inside* the container) back onto that host directory.
+        self.bash = BashTool(
+            cwd=cwd,
+            container=container,
+            container_workdir=container_workdir,
+            init_commands=bash_init_commands,
+        )
+        self.editor = EditorTool(cwd=cwd, container_workdir=container_workdir if container else None)
         self.verbose = verbose
         self._console = Console() if verbose else None
 

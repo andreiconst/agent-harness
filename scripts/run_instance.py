@@ -67,6 +67,8 @@ def main() -> None:
         max_turns=args.max_turns,
         verbose=not args.quiet,
         container=docker_env.container_name if docker_env else None,
+        container_workdir=docker_env.container_workdir if docker_env else "/testbed",
+        bash_init_commands=docker_env.bash_init_commands if docker_env else None,
     )
     task = f"{instance['problem_statement']}\n\nRepository: {instance['repo']}"
     result = agent.run(task)

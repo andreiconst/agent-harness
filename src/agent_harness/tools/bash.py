@@ -32,6 +32,7 @@ class BashTool:
         timeout: float = 60.0,
         container: str | None = None,
         container_workdir: str = "/testbed",
+        init_commands: list[str] | None = None,
     ):
         self._cwd = cwd
         self._timeout = timeout
@@ -42,6 +43,13 @@ class BashTool:
         # harness convention of checking the repo out at /testbed.
         self._container = container
         self._container_workdir = container_workdir
+        # Run once, silently, right after the session starts — e.g. SWE-bench
+        # instances need `conda activate testbed` before any real command, and
+        # a non-interactive `docker exec` shell won't source that on its own
+        # (no tty means bash never sources ~/.bashrc, so a plain `docker exec
+        # -i <container> /bin/bash` lands in the *base* conda env, not the
+        # per-instance one with the actual dependencies installed).
+        self._init_commands = init_commands or []
         self._proc: subprocess.Popen | None = None
         self._output_queue: queue.Queue[str | None] = queue.Queue()
 
@@ -63,6 +71,9 @@ class BashTool:
             **popen_kwargs,
         )
         threading.Thread(target=self._pump_output, daemon=True).start()
+
+        for command in self._init_commands:
+            self._run_raw(command)
 
     def _pump_output(self) -> None:
         assert self._proc and self._proc.stdout
@@ -94,14 +105,8 @@ class BashTool:
             + output[-self._TAIL_CHARS :]
         )
 
-    def run(self, command: str, restart: bool = False) -> str:
-        if restart:
-            self.stop()
-            self.start()
-            return "bash session restarted"
-
-        if self._proc is None or self._proc.poll() is not None:
-            self.start()
+    def _run_raw(self, command: str) -> tuple[str, str | None]:
+        """Send one command and wait for it to finish; no truncation, no exit-code suffix."""
         assert self._proc and self._proc.stdin
 
         sentinel = f"__DONE_{uuid.uuid4().hex}__"
@@ -128,7 +133,19 @@ class BashTool:
                 break
             lines.append(line)
 
-        output = self._truncate_output("".join(lines))
+        return "".join(lines), exit_code
+
+    def run(self, command: str, restart: bool = False) -> str:
+        if restart:
+            self.stop()
+            self.start()
+            return "bash session restarted"
+
+        if self._proc is None or self._proc.poll() is not None:
+            self.start()
+
+        raw_output, exit_code = self._run_raw(command)
+        output = self._truncate_output(raw_output)
         if exit_code is not None:
             output += f"\n[exit code: {exit_code}]"
         return output

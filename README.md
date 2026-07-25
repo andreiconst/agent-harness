@@ -147,6 +147,29 @@ that instance:
 4. `Agent.diff()` still works unmodified too — the bind-mounted directory is
    a real host directory including `.git`.
 
+The first real run against astropy under `--docker` surfaced two gotchas,
+both now fixed:
+
+- **Wrong Python environment.** `docker exec -i <container> /bin/bash` isn't
+  a login/interactive shell (no tty), so it never sources the profile that
+  activates the instance's named conda env (`testbed`) — commands silently
+  ran in the *base* conda env instead, which doesn't have the repo's actual
+  dependencies (`pyerfa`, `pytest`, ...) installed, causing exactly the kind
+  of import/build failures Docker was supposed to eliminate. Fixed by
+  extracting the real activation lines (`source .../activate` +
+  `conda activate testbed`) straight from the instance's own
+  `test_spec.env_script_list` and running them once, silently, right after
+  the persistent bash session starts (`BashTool(init_commands=...)`)
+  — not hardcoded, so it holds for any repo's env manager, not just conda.
+- **Editor tool "No such file" on files that clearly exist.** The model
+  explores via `bash`, which runs *inside* the container and sees paths like
+  `/testbed/foo.py` — so it naturally passes that same absolute path to the
+  editor tool too. But the editor operates on the host filesystem, where
+  `/testbed` doesn't exist (only the bind-mounted directory does), so every
+  container-absolute path it had actually seen failed to resolve. Fixed by
+  giving `EditorTool` a `container_workdir` param that remaps a leading
+  `/testbed` (or whatever the container's workdir is) onto the host `cwd`.
+
 ## Setup
 
 ```bash
