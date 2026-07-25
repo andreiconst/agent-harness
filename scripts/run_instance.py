@@ -33,17 +33,47 @@ def main() -> None:
     parser.add_argument(
         "--quiet", action="store_true", help="don't print each step as the agent runs"
     )
+    parser.add_argument(
+        "--docker",
+        action="store_true",
+        help=(
+            "run bash commands inside the instance's real SWE-bench Docker "
+            "environment instead of a plain git checkout (needs Docker running; "
+            "pulls the official prebuilt image on first use per repo)"
+        ),
+    )
+    parser.add_argument(
+        "--keep-container",
+        action="store_true",
+        help="with --docker, don't remove the container when done (for debugging)",
+    )
     args = parser.parse_args()
 
     instance = get_instance(args.instance_id, split=args.split, dataset=args.dataset)
 
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="agent-harness-"))
-    repo_path = prepare_repo(instance, workdir)
 
-    agent = Agent(cwd=str(repo_path), max_turns=args.max_turns, verbose=not args.quiet)
+    docker_env = None
+    if args.docker:
+        from agent_harness.swebench.docker_env import provision_container
+
+        docker_env = provision_container(instance, workdir)
+        repo_path = docker_env.repo_path
+    else:
+        repo_path = prepare_repo(instance, workdir)
+
+    agent = Agent(
+        cwd=str(repo_path),
+        max_turns=args.max_turns,
+        verbose=not args.quiet,
+        container=docker_env.container_name if docker_env else None,
+    )
     task = f"{instance['problem_statement']}\n\nRepository: {instance['repo']}"
     result = agent.run(task)
     patch = agent.diff()
+
+    if docker_env and not args.keep_container:
+        docker_env.cleanup()
 
     # Saved next to (not inside) the repo checkout, so it doesn't show up in `git diff`.
     transcript_path = workdir / f"{instance['instance_id']}.trajectory.json"
@@ -55,6 +85,8 @@ def main() -> None:
     print(f"\nrepo checkout: {repo_path}")
     print(f"full trajectory: {transcript_path}")
     print(f"(view it with: python scripts/show_transcript.py {transcript_path})")
+    if docker_env and args.keep_container:
+        print(f"container kept running: {docker_env.container_name}")
 
     if args.output:
         prediction = {

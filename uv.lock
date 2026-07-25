@@ -29,6 +29,7 @@ dev = [
     { name = "pytest" },
 ]
 eval = [
+    { name = "docker" },
     { name = "swebench" },
 ]
 
@@ -36,6 +37,7 @@ eval = [
 requires-dist = [
     { name = "anthropic", specifier = ">=0.40" },
     { name = "datasets", specifier = ">=2.19" },
+    { name = "docker", marker = "extra == 'eval'", specifier = ">=7.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "python-dotenv", specifier = ">=1.0" },
     { name = "rich", specifier = ">=13.0" },

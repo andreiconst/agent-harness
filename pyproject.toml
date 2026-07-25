@@ -11,8 +11,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Official SWE-bench docker-based evaluation harness.
-eval = ["swebench>=2.1"]
+# Official SWE-bench docker-based evaluation harness — also used at agent-run
+# time (scripts/run_instance.py --docker) to give the agent a real per-repo
+# environment instead of a bare git checkout.
+eval = ["swebench>=2.1", "docker>=7.0"]
 dev = ["pytest>=8.0"]
 
 [build-system]

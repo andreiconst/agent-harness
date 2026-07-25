@@ -26,21 +26,41 @@ class BashTool:
     _HEAD_CHARS = 1500
     _TAIL_CHARS = 1500
 
-    def __init__(self, cwd: str | None = None, timeout: float = 60.0):
+    def __init__(
+        self,
+        cwd: str | None = None,
+        timeout: float = 60.0,
+        container: str | None = None,
+        container_workdir: str = "/testbed",
+    ):
         self._cwd = cwd
         self._timeout = timeout
+        # When `container` is set, commands run via `docker exec` into that
+        # (already-running) container instead of a local /bin/bash — used for
+        # SWE-bench instances, where the repo's real environment only exists
+        # inside the container. `container_workdir` matches the SWE-bench
+        # harness convention of checking the repo out at /testbed.
+        self._container = container
+        self._container_workdir = container_workdir
         self._proc: subprocess.Popen | None = None
         self._output_queue: queue.Queue[str | None] = queue.Queue()
 
     def start(self) -> None:
+        if self._container:
+            argv = ["docker", "exec", "-i", "-w", self._container_workdir, self._container, "/bin/bash"]
+            popen_kwargs = {}
+        else:
+            argv = ["/bin/bash"]
+            popen_kwargs = {"cwd": self._cwd}
+
         self._proc = subprocess.Popen(
-            ["/bin/bash"],
-            cwd=self._cwd,
+            argv,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
+            **popen_kwargs,
         )
         threading.Thread(target=self._pump_output, daemon=True).start()
 

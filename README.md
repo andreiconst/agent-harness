@@ -103,9 +103,49 @@ tells the model to call `submit` as soon as the fix is verified once.
 ### Everything else
 
 - [`src/agent_harness/swebench/`](src/agent_harness/swebench) — loads
-  SWE-bench instances from Hugging Face (`loader.py`) and does a plain
-  `git clone` + `git checkout <base_commit>` of the issue's repo
-  (`setup_repo.py`) into a working directory for the agent to operate in.
+  SWE-bench instances from Hugging Face (`loader.py`) and gets the agent a
+  working directory for the issue's repo, one of two ways:
+  - `setup_repo.py` — plain `git clone` + `git checkout <base_commit>`. Fast,
+    no Docker needed, but no dependencies are installed — fine for
+    pure-Python repos, but anything with compiled extensions (astropy,
+    numpy, lxml, ...) generally can't even be imported this way.
+  - `docker_env.py` — provisions the instance's *real* SWE-bench Docker
+    environment (see below), for when the agent actually needs to run the
+    repo's tests.
+
+### Environment: plain checkout vs. real Docker environment
+
+The default (`prepare_repo`) is a bare `git clone`. This is enough for the
+agent to read code and make edits, but it has no working Python/conda
+environment — on a real run against astropy, this is what burned ~15 of 40
+turns fighting `pip: command not found`, the wrong Python version, and a
+C-extension build that failed against a mismatched local toolchain, before
+the agent gave up on running anything and worked the fix out by reasoning
+about the code directly.
+
+`--docker` (implemented in [`docker_env.py`](src/agent_harness/swebench/docker_env.py))
+fixes this by giving the agent the *actual* environment SWE-bench built for
+that instance:
+1. Reuses the official `swebench` harness's own image logic
+   (`make_test_spec(..., namespace="swebench")` — the same default
+   `run_evaluation.py` itself uses) to **pull** the prebuilt instance image
+   from Docker Hub rather than building one from scratch locally. This is
+   what actually avoids the toolchain mismatch: it's a real Linux
+   environment with the matching compiler/glibc, so a build that fails
+   natively on macOS should just work inside it (Apple Silicon runs it under
+   QEMU emulation — slower, not wrong).
+2. Extracts the image's `/testbed` (repo checked out at `base_commit`, deps
+   already installed) to a host directory via a short-lived throwaway
+   container (`docker cp`), then starts the real, long-lived container with
+   that host directory **bind-mounted back in** at the same path.
+3. That split matters: `EditorTool` keeps doing plain host-filesystem I/O on
+   the bind-mounted directory, completely unchanged. Only `BashTool` needed
+   a change — it runs commands via `docker exec -i <container> /bin/bash`
+   instead of a local shell (same sentinel/output-parsing logic either way),
+   so the agent's commands execute with the real environment's Python,
+   installed packages, and build tools.
+4. `Agent.diff()` still works unmodified too — the bind-mounted directory is
+   a real host directory including `.git`.
 
 ## Setup
 

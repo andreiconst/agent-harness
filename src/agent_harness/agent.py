@@ -74,12 +74,17 @@ class Agent:
         max_turns: int = 40,
         client: Anthropic | None = None,
         verbose: bool = True,
+        container: str | None = None,
     ):
         self.cwd = cwd
         self.model = model
         self.max_turns = max_turns
         self.client = client or get_client()
-        self.bash = BashTool(cwd=cwd)
+        # `container`, if set, is a running Docker container name — bash
+        # commands execute inside it via `docker exec` (see docker_env.py),
+        # while the editor still operates on `cwd`, which is expected to be
+        # that same container's filesystem bind-mounted onto the host.
+        self.bash = BashTool(cwd=cwd, container=container)
         self.editor = EditorTool(cwd=cwd)
         self.verbose = verbose
         self._console = Console() if verbose else None
