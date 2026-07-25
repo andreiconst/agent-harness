@@ -42,10 +42,16 @@ codebase and an issue to resolve. Use the bash and str_replace_based_edit_tool
 tools to explore the repository, reproduce the problem, and make the minimal
 changes needed to fix it.
 
-Verify your fix once — e.g. by running the relevant test(s) or a small repro
-script — and then immediately call the `submit` tool. Do not re-verify
-multiple times, gold-plate the fix, or write summary documentation; none of
-that improves the submission and it only spends turns and tokens.
+Verify your fix by running the relevant test file with pytest exactly ONCE.
+If it passes, call the `submit` tool immediately in that same turn. Do not:
+- run the same test file again after it has already passed
+- write additional standalone scripts to re-confirm a fix pytest already
+  confirmed
+- investigate or try to fix pre-existing test failures unrelated to your
+  change — only failures your change caused matter
+- gold-plate the fix or write summary documentation
+
+Each of those costs turns and tokens without improving the submission.
 """
 
 
@@ -64,6 +70,10 @@ class AgentResult:
     stop_reason: str | None
     submitted: bool = False
     summary: str | None = None
+    input_tokens: int = 0
+    output_tokens: int = 0
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
 
 
 class Agent:
@@ -113,6 +123,12 @@ class Agent:
         stop_reason = None
         turn = 0
         summary: str | None = None
+        usage_totals = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_read_input_tokens": 0,
+        }
 
         for turn in range(1, self.max_turns + 1):
             if self.verbose:
@@ -124,9 +140,27 @@ class Agent:
                 system=SYSTEM_PROMPT,
                 tools=self.tools,
                 messages=messages,
+                # Caches everything up through the last message block — the
+                # system prompt, tool defs, and the whole growing history are
+                # byte-identical turn over turn (we only ever append), so this
+                # is a straightforward prefix-cache win with no manual
+                # bookkeeping: subsequent turns re-read the unchanged prefix
+                # at ~10% of normal input cost instead of reprocessing it.
+                cache_control={"type": "ephemeral"},
             )
             messages.append({"role": "assistant", "content": response.content})
             stop_reason = response.stop_reason
+
+            for key in usage_totals:
+                usage_totals[key] += getattr(response.usage, key, None) or 0
+            if self.verbose:
+                u = response.usage
+                self._console.print(
+                    f"[dim]usage: input={u.input_tokens} "
+                    f"cache_read={u.cache_read_input_tokens or 0} "
+                    f"cache_creation={u.cache_creation_input_tokens or 0} "
+                    f"output={u.output_tokens}[/]"
+                )
 
             tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
             if self.verbose:
@@ -167,6 +201,7 @@ class Agent:
             stop_reason=stop_reason,
             submitted=summary is not None,
             summary=summary,
+            **usage_totals,
         )
 
     def _execute_tool(self, block) -> dict:

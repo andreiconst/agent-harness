@@ -39,11 +39,38 @@ After the loop ends, `Agent.diff()` just shells out to `git diff` in the
 repo's working directory to capture everything the agent changed, which is
 what gets submitted as the SWE-bench prediction.
 
-There's no context trimming and no prompt caching yet — see
-[docs/ROADMAP.md](docs/ROADMAP.md). On a real run against astropy, an
-untightened version of this loop burned 40 turns and $2.50 mostly on failed
-environment setup and redundant re-verification after the fix was already
-found; the `submit` tool and output truncation below are the fixes for that.
+There's no context trimming yet (old, now-stale tool results still stay in
+context for the rest of the run) — see [docs/ROADMAP.md](docs/ROADMAP.md).
+On a real run against astropy, an untightened version of this loop burned 40
+turns and $2.50 mostly on failed environment setup and redundant
+re-verification after the fix was already found; `--docker`, the `submit`
+tool, output truncation, and prompt caching (below) are the fixes for that.
+
+### Prompt caching
+
+Every turn resends the entire conversation so far — the API is stateless —
+so without caching, a growing transcript means later turns repay full price
+for everything since turn 1. `client.messages.create(..., cache_control:
+{"type": "ephemeral"})` fixes this: Anthropic keeps a server-side copy of
+everything up to the last message and, on the next request, reads the
+matching prefix back at ~10% of normal input cost instead of reprocessing
+it. This is a cheap fit for this loop specifically because the prefix is
+*append-only* — the system prompt and tool defs never change, and each turn
+only adds to `messages` rather than editing earlier ones — so the cached
+prefix stays byte-identical turn over turn (any edit anywhere in it would
+invalidate everything after that point). `Agent.run()` prints per-turn
+`input`/`cache_read`/`cache_creation`/`output` token counts as it goes
+(`AgentResult` also carries the running totals), and `run_instance.py`
+prints a final cache-hit-rate summary.
+
+A second, unrelated but complementary win came from a real run's logs: once
+`--docker` gave the agent a working test suite, it started re-verifying an
+already-passing fix over and over — running the same `pytest` file four
+times and writing ~7 redundant standalone confirmation scripts, none of
+which changed the outcome. That's pure turn/token waste independent of
+caching, so the system prompt now explicitly says: run the relevant test
+file with pytest exactly once, submit immediately if it passes, and don't
+chase pre-existing unrelated test failures.
 
 ### The tools
 

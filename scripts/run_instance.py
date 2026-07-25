@@ -84,6 +84,15 @@ def main() -> None:
     status = f"submitted: {result.summary}" if result.submitted else "did not call submit"
     print(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason}, {status} ---")
     print(patch or "(no changes made)")
+    print(
+        f"\nusage: input={result.input_tokens} "
+        f"cache_read={result.cache_read_input_tokens} "
+        f"cache_creation={result.cache_creation_input_tokens} "
+        f"output={result.output_tokens}"
+    )
+    total_input = result.input_tokens + result.cache_read_input_tokens + result.cache_creation_input_tokens
+    if total_input:
+        print(f"cache hit rate: {result.cache_read_input_tokens / total_input:.0%} of input tokens served from cache")
     print(f"\nrepo checkout: {repo_path}")
     print(f"full trajectory: {transcript_path}")
     print(f"(view it with: python scripts/show_transcript.py {transcript_path})")
