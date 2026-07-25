@@ -167,6 +167,18 @@ the agent is actually doing turn by turn (pass `--quiet` to suppress this):
 python scripts/run_instance.py astropy__astropy-12907 --output preds.jsonl
 ```
 
+To give the agent the instance's real environment instead of a bare
+checkout (needs Docker running, and `uv pip install -e ".[eval]"` for the
+`swebench`/`docker` packages) — this pulls the prebuilt instance image on
+first use per repo, ~1GB for astropy, cached after that:
+
+```bash
+python scripts/run_instance.py astropy__astropy-12907 --docker --output preds.jsonl
+```
+
+Add `--keep-container` if you want to `docker exec` into it yourself
+afterward instead of it being removed automatically.
+
 The full trajectory (every message the model actually saw — bash output is
 still capped per above, with a path to the untruncated log) is also saved as
 JSON next to the repo checkout, so you can review it after the fact, e.g. to

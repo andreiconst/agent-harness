@@ -2,14 +2,15 @@
 
 Rough order, roughly in order of expected impact on SWE-bench score.
 
-## Environment fidelity (biggest gap right now)
-`setup_repo.py` only does `git clone` + `git checkout base_commit`. The agent
-has no Python environment with the target repo's dependencies installed, so
-it can't actually run the failing test. The official SWE-bench harness solves
-this with per-instance docker images. Options:
-- Use `swebench`'s own docker images to build/run the agent's container
-  instead of just its evaluation step.
-- Or hand-roll conda env setup per repo (more work, more understanding).
+## Environment fidelity
+~~`setup_repo.py` only does `git clone`~~ — done: `docker_env.py` +
+`run_instance.py --docker` gives the agent the real per-instance SWE-bench
+environment (pulls the official prebuilt image, bind-mounts it to a host
+dir). Not yet verified against a full real run — do that next, and note any
+follow-up issues here (e.g. per-repo image quirks, `cap_add` requirements
+beyond what's copied from the eval harness's own `docker_specs`). The plain
+`git clone` path (`setup_repo.py`) stays as the default for fast/no-Docker
+iteration.
 
 ## Agent loop
 - Context management: individual bash outputs are now capped (head+tail,
