@@ -12,12 +12,16 @@ this with per-instance docker images. Options:
 - Or hand-roll conda env setup per repo (more work, more understanding).
 
 ## Agent loop
-- Context management: long trajectories will blow past the context window on
-  harder instances. Need truncation/summarization of old tool results.
+- Context management: individual bash outputs are now capped (head+tail,
+  overflow to a file), but a long trajectory still accumulates many *old*
+  tool results that stay in context even once they're stale (e.g. a file
+  view superseded by a later edit). Need context editing or summarization of
+  old turns, not just per-call output capping.
 - Prompt caching (`cache_control` on the system prompt / tool defs) to cut
-  cost on long trajectories.
-- A "submit"/"done" tool instead of relying on stop_reason != tool_use, so the
-  model has an explicit way to signal completion.
+  cost on long trajectories — the system prompt and tool defs are static
+  every turn, so this is close to free.
+- ~~A "submit" tool~~ — done: `submit` ends the loop explicitly instead of
+  relying on `stop_reason != "tool_use"`.
 - Retry/self-repair: if the produced patch doesn't apply or tests still fail,
   loop back with that feedback instead of stopping.
 
@@ -25,8 +29,6 @@ this with per-instance docker images. Options:
 - Batch runner: iterate over a full split (SWE-bench Lite is 300 instances),
   run with concurrency, write one predictions.jsonl.
 - Timeouts and cost caps per instance so a stuck agent doesn't run forever.
-- Logging: save full transcripts per instance for later inspection/debugging,
-  not just the final diff.
 
 ## Eval
 - Wire up `scripts/evaluate.py` output parsing to get a pass/fail table and

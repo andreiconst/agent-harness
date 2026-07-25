@@ -15,20 +15,46 @@ from .tools.editor import EditorTool
 
 _TRUNCATE_AT = 2000
 
-SYSTEM_PROMPT = """You are a software engineering agent. You have been given a
-codebase and an issue to resolve. Use the bash and str_replace_editor tools to
-explore the repository, reproduce the problem, make the minimal changes
-needed to fix it, and verify your fix (e.g. by running relevant tests).
+SUBMIT_TOOL_NAME = "submit"
+SUBMIT_TOOL = {
+    "name": SUBMIT_TOOL_NAME,
+    "description": (
+        "Call this as soon as you've made the minimal fix and verified it works "
+        "once. This ends the session immediately and submits the repo's current "
+        "state as your final answer. Do not call it after only a partial fix, "
+        "and do not delay calling it to re-verify multiple times or write "
+        "extra documentation — those don't improve the submission."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "summary": {
+                "type": "string",
+                "description": "One or two sentences on what was changed and why.",
+            }
+        },
+        "required": ["summary"],
+    },
+}
 
-When you are confident the issue is resolved, stop calling tools and reply
-with a short summary of what you changed and why.
+SYSTEM_PROMPT = """You are a software engineering agent. You have been given a
+codebase and an issue to resolve. Use the bash and str_replace_based_edit_tool
+tools to explore the repository, reproduce the problem, and make the minimal
+changes needed to fix it.
+
+Verify your fix once — e.g. by running the relevant test(s) or a small repro
+script — and then immediately call the `submit` tool. Do not re-verify
+multiple times, gold-plate the fix, or write summary documentation; none of
+that improves the submission and it only spends turns and tokens.
 """
 
 
 def _truncate(text: str, limit: int = _TRUNCATE_AT) -> str:
     if len(text) <= limit:
         return text
-    return f"{text[:limit]}... ({len(text) - limit} more chars)"
+    half = limit // 2
+    omitted = len(text) - limit
+    return f"{text[:half]}\n... [{omitted} more chars] ...\n{text[-half:]}"
 
 
 @dataclass
@@ -36,6 +62,8 @@ class AgentResult:
     messages: list[dict]
     turns: int
     stop_reason: str | None
+    submitted: bool = False
+    summary: str | None = None
 
 
 class Agent:
@@ -61,12 +89,14 @@ class Agent:
         return [
             {"type": self.bash.tool_type, "name": self.bash.name},
             {"type": self.editor.tool_type, "name": self.editor.name},
+            SUBMIT_TOOL,
         ]
 
     def run(self, task: str) -> AgentResult:
         messages: list[dict] = [{"role": "user", "content": task}]
         stop_reason = None
         turn = 0
+        summary: str | None = None
 
         for turn in range(1, self.max_turns + 1):
             if self.verbose:
@@ -96,6 +126,14 @@ class Agent:
 
             tool_results = []
             for block in tool_use_blocks:
+                if block.name == SUBMIT_TOOL_NAME:
+                    summary = block.input.get("summary", "")
+                    tool_results.append(
+                        {"type": "tool_result", "tool_use_id": block.id, "content": "submitted"}
+                    )
+                    if self.verbose:
+                        self._console.print(f"[bold magenta]submitted:[/] {summary}")
+                    continue
                 result = self._execute_tool(block)
                 if self.verbose:
                     style = "bold red" if result.get("is_error") else "green"
@@ -103,8 +141,17 @@ class Agent:
                 tool_results.append(result)
             messages.append({"role": "user", "content": tool_results})
 
+            if summary is not None:
+                break
+
         self.bash.stop()
-        return AgentResult(messages=messages, turns=turn, stop_reason=stop_reason)
+        return AgentResult(
+            messages=messages,
+            turns=turn,
+            stop_reason=stop_reason,
+            submitted=summary is not None,
+            summary=summary,
+        )
 
     def _execute_tool(self, block) -> dict:
         try:

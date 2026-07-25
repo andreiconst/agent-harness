@@ -35,9 +35,11 @@ def test_insert(tmp_path):
     assert (tmp_path / "a.py").read_text() == "line1\nline2\nline3\n"
 
 
-def test_undo(tmp_path):
+def test_unknown_command_raises(tmp_path):
     editor = EditorTool(cwd=tmp_path)
     editor.run(command="create", path="a.py", file_text="x = 1\n")
-    editor.run(command="str_replace", path="a.py", old_str="x = 1", new_str="x = 2")
-    editor.run(command="undo_edit", path="a.py")
-    assert (tmp_path / "a.py").read_text() == "x = 1\n"
+    try:
+        editor.run(command="undo_edit", path="a.py")
+        assert False, "expected a ValueError for an unsupported command"
+    except ValueError:
+        pass

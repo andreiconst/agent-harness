@@ -49,7 +49,8 @@ def main() -> None:
     transcript_path = workdir / f"{instance['instance_id']}.trajectory.json"
     save_transcript(result.messages, transcript_path)
 
-    print(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason} ---")
+    status = f"submitted: {result.summary}" if result.submitted else "did not call submit"
+    print(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason}, {status} ---")
     print(patch or "(no changes made)")
     print(f"\nrepo checkout: {repo_path}")
     print(f"full trajectory: {transcript_path}")

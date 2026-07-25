@@ -14,7 +14,7 @@ themselves, and the eval harness — rather than to wrap an existing agent SDK.
 1. Seed `messages` with one user turn: the SWE-bench issue's problem
    statement.
 2. Call `client.messages.create(...)`, passing the full `messages` history,
-   a fixed `SYSTEM_PROMPT`, and the two tool definitions below. Append
+   a fixed `SYSTEM_PROMPT`, and the three tool definitions below. Append
    whatever Claude replies with (`response.content`, a list of text and/or
    `tool_use` blocks) to `messages` as an assistant turn.
 3. Check `response.stop_reason`:
@@ -23,29 +23,35 @@ themselves, and the eval harness — rather than to wrap an existing agent SDK.
    - If it **is** `"tool_use"`, take every `tool_use` block in the response
      and run it through `_execute_tool()`, which dispatches to `bash.run()`
      or `editor.run()` based on the block's `name` and passes `block.input`
-     straight through as keyword arguments. Each execution — success or
-     exception — becomes one `tool_result` block (with `is_error: true` on
-     failure so Claude sees the tool call failed, not that it succeeded with
-     empty output).
-   - Append all the `tool_result` blocks as a single new user turn, and go
-     back to step 2.
-4. Stop after `stop_reason != "tool_use"` or after `max_turns` round-trips
-   (default 40), whichever comes first — this is the only budget control
-   right now, there's no token or wall-clock limit yet.
+     straight through as keyword arguments — **except** a call to `submit`
+     (see below), which is intercepted before execution. Each execution —
+     success or exception — becomes one `tool_result` block (with
+     `is_error: true` on failure so Claude sees the tool call failed, not
+     that it succeeded with empty output).
+   - Append all the `tool_result` blocks as a single new user turn.
+   - If one of this turn's tool calls was `submit`, stop — no further API
+     call. Otherwise go back to step 2.
+4. Stop after `stop_reason != "tool_use"`, a `submit` call, or `max_turns`
+   round-trips (default 40), whichever comes first — this is the only budget
+   control right now, there's no token or wall-clock limit yet.
 
 After the loop ends, `Agent.diff()` just shells out to `git diff` in the
 repo's working directory to capture everything the agent changed, which is
 what gets submitted as the SWE-bench prediction.
 
-There's no context trimming, no prompt caching, and no explicit "I'm done"
-tool yet — see [docs/ROADMAP.md](docs/ROADMAP.md).
+There's no context trimming and no prompt caching yet — see
+[docs/ROADMAP.md](docs/ROADMAP.md). On a real run against astropy, an
+untightened version of this loop burned 40 turns and $2.50 mostly on failed
+environment setup and redundant re-verification after the fix was already
+found; the `submit` tool and output truncation below are the fixes for that.
 
 ### The tools
 
-The agent has exactly two tools, both modeled directly on the tool specs
-Anthropic ships for computer-use/coding agents (`bash_20250124` and
-`text_editor_20250124`) — we implement the *execution* side ourselves, Claude
-just gets the tool name/type and decides when to call them.
+The agent has three tools: two modeled directly on the tool specs Anthropic
+ships for computer-use/coding agents (`bash_20250124` and
+`text_editor_20250728` — we implement the *execution* side ourselves, Claude
+just gets the tool name/type and decides when to call them), plus one custom
+tool for signaling completion.
 
 **`bash`** ([`tools/bash.py`](src/agent_harness/tools/bash.py)) — a single
 persistent `/bin/bash` subprocess per `Agent` instance, not a fresh
@@ -63,10 +69,19 @@ effect on the next call, exactly like a human's terminal session. Mechanics:
     up and reports a timeout rather than hanging forever.
   - `run(command, restart=True)` kills and respawns the subprocess, for when
     a command wedges the shell.
+  - **Output is capped** at 1500 chars from the head + 1500 from the tail
+    (build logs and compiler errors usually matter most at the very end, so
+    a head-only cap loses exactly the useful part). Anything cut is written
+    in full to a temp file, and the truncated output tells the model that
+    file's path so it can `grep`/`sed`/`tail` it directly instead of us
+    building a second "read more output" tool. This matters because
+    whatever's in `tool_result` gets resent to the API on *every* later
+    turn — an untruncated giant build log doesn't just cost once, it costs
+    on every subsequent request for the rest of the run.
 
-**`str_replace_editor`** ([`tools/editor.py`](src/agent_harness/tools/editor.py))
+**`str_replace_based_edit_tool`** ([`tools/editor.py`](src/agent_harness/tools/editor.py))
 — structured file edits instead of Claude writing raw shell/`sed` to touch
-files. Five commands, dispatched on the `command` argument:
+files. Four commands, dispatched on the `command` argument:
   - `view` — show a file with line numbers (optionally restricted to a
     `view_range`), or list a directory's contents if `path` is a dir.
   - `create` — write `file_text` to `path`, making parent directories as
@@ -75,11 +90,15 @@ files. Five commands, dispatched on the `command` argument:
     appears in the file *exactly once*; raises otherwise (ambiguous edit) so
     Claude has to supply enough surrounding context to pin down the match.
   - `insert` — insert `new_str` as a new line after line `insert_line`.
-  - `undo_edit` — revert the file to its state before the last `create` /
-    `str_replace` / `insert` on that path.
-  - Every mutating command snapshots the file's prior contents (in memory,
-    per `EditorTool` instance) before writing, which is what `undo_edit`
-    restores from.
+
+**`submit`** — a plain custom tool (`name`/`description`/`input_schema`, no
+special Anthropic type), unlike the other two. Takes one field, `summary`,
+and the loop treats seeing this tool call as a hard stop — no further API
+calls, whatever `git diff` looks like at that point is final. Without this,
+the only way the loop knew to stop was the model happening not to call a
+tool on some turn, which let it wander (re-verifying an already-confirmed
+fix, writing unsolicited docs) right up to `max_turns`. The system prompt
+tells the model to call `submit` as soon as the fix is verified once.
 
 ### Everything else
 
@@ -108,9 +127,10 @@ the agent is actually doing turn by turn (pass `--quiet` to suppress this):
 python scripts/run_instance.py astropy__astropy-12907 --output preds.jsonl
 ```
 
-The full trajectory (every message, untruncated) is also saved as JSON next
-to the repo checkout, so you can review it after the fact, e.g. to see
-exactly what a run did overnight, or to compare two runs of the same
+The full trajectory (every message the model actually saw — bash output is
+still capped per above, with a path to the untruncated log) is also saved as
+JSON next to the repo checkout, so you can review it after the fact, e.g. to
+see exactly what a run did overnight, or to compare two runs of the same
 instance:
 
 ```bash

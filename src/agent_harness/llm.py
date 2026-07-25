@@ -2,7 +2,7 @@ import os
 
 from anthropic import Anthropic
 
-DEFAULT_MODEL = "claude-sonnet-5"
+DEFAULT_MODEL = "claude-sonnet-4-5"
 
 
 def get_client() -> Anthropic:
