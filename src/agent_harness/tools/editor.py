@@ -9,13 +9,15 @@ from __future__ import annotations
 
 from pathlib import Path
 
+_MAX_VIEW_CHARS = 4000
+
 
 class EditorTool:
     name = "str_replace_based_edit_tool"
     tool_type = "text_editor_20250728"
 
     def __init__(self, cwd: str | Path | None = None, container_workdir: str | None = None):
-        self._cwd = Path(cwd) if cwd else Path.cwd()
+        self._cwd = (Path(cwd) if cwd else Path.cwd()).resolve()
         # When set, an absolute path starting with this prefix is remapped
         # onto `cwd` instead of being looked up literally. This matters when
         # `cwd` is a host directory bind-mounted into a container at
@@ -42,23 +44,44 @@ class EditorTool:
     def _resolve(self, path: str) -> Path:
         if self._container_workdir and (path == self._container_workdir or path.startswith(self._container_workdir + "/")):
             relative = path[len(self._container_workdir) :].lstrip("/")
-            return self._cwd / relative if relative else self._cwd
-        p = Path(path)
-        return p if p.is_absolute() else self._cwd / p
+            p = self._cwd / relative if relative else self._cwd
+        else:
+            raw = Path(path)
+            p = raw if raw.is_absolute() else self._cwd / raw
+
+        # Every operation is jailed to `cwd`, in every mode — not just
+        # container mode. Without this, any absolute path (or a relative
+        # path with enough `..`) is followed literally against the real
+        # host filesystem: a model passing "/" gets the real disk root
+        # `rglob`'d, "/etc/passwd" gets read straight off the host, etc.
+        resolved = p.resolve()
+        if resolved != self._cwd and self._cwd not in resolved.parents:
+            raise ValueError(f"path {path!r} is outside the working directory ({self._cwd})")
+        return resolved
+
+    def _truncate(self, text: str) -> str:
+        if len(text) <= _MAX_VIEW_CHARS:
+            return text
+        omitted = len(text) - _MAX_VIEW_CHARS
+        return (
+            text[:_MAX_VIEW_CHARS]
+            + f"\n... [{omitted} more chars omitted — use view_range for a file, "
+            + "or view a narrower subdirectory] ..."
+        )
 
     def _view(self, p: Path, view_range: list[int] | None) -> str:
         if p.is_dir():
             entries = sorted(
                 str(c.relative_to(p)) for c in p.rglob("*") if ".git" not in c.parts
             )
-            return "\n".join(entries) or "(empty directory)"
+            return self._truncate("\n".join(entries) or "(empty directory)")
 
         lines = p.read_text().splitlines()
         start, end = 1, len(lines)
         if view_range:
             start, end = view_range
         numbered = [f"{i + 1}\t{lines[i]}" for i in range(start - 1, min(end, len(lines)))]
-        return "\n".join(numbered)
+        return self._truncate("\n".join(numbered))
 
     def _create(self, p: Path, file_text: str) -> str:
         p.parent.mkdir(parents=True, exist_ok=True)

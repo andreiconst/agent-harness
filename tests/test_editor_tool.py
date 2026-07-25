@@ -69,10 +69,50 @@ def test_container_workdir_remaps_container_absolute_paths(tmp_path):
 
 def test_container_workdir_prefix_match_is_exact_not_substring(tmp_path):
     # "/testbed-other/..." merely shares a string prefix with "/testbed" —
-    # it must NOT be remapped onto `cwd`, only an exact "/testbed" or a
-    # "/testbed/..." path should be.
-    from pathlib import Path
-
+    # it must NOT be remapped onto `cwd`. Since it's also outside `cwd`,
+    # it's rejected by the containment check (see below), not silently
+    # resolved against the real host filesystem.
     editor = EditorTool(cwd=tmp_path, container_workdir="/testbed")
-    assert editor._resolve("/testbed-other/b.py") == Path("/testbed-other/b.py")
-    assert editor._resolve("/testbed/b.py") == tmp_path / "b.py"
+    try:
+        editor._resolve("/testbed-other/b.py")
+        assert False, "expected a ValueError for a path outside the working directory"
+    except ValueError:
+        pass
+    assert editor._resolve("/testbed/b.py") == (tmp_path / "b.py").resolve()
+
+
+def test_rejects_paths_outside_cwd(tmp_path):
+    # Real incident: the model passed path="/" to `view`, and the old
+    # implementation followed it literally against the *host* filesystem —
+    # rglobbing the entire real disk (hundreds of millions of chars) into a
+    # single tool_result, which then blew past the API's request-size limit
+    # on the next turn. Every absolute (or `..`-escaping) path outside `cwd`
+    # must be rejected outright, in every mode, not just --docker.
+    editor = EditorTool(cwd=tmp_path)
+    for bad_path in ["/", "/etc/passwd", "..", "../outside.txt", str(tmp_path.parent)]:
+        try:
+            editor.run(command="view", path=bad_path)
+            assert False, f"expected a ValueError for out-of-bounds path {bad_path!r}"
+        except ValueError:
+            pass
+
+
+def test_rejects_paths_outside_cwd_in_docker_mode_too(tmp_path):
+    # Same containment check must hold when container_workdir is set — an
+    # absolute path that isn't under /testbed (or is testbed-prefixed but
+    # escapes it) must not fall through to a literal host lookup.
+    editor = EditorTool(cwd=tmp_path, container_workdir="/testbed")
+    for bad_path in ["/", "/opt/miniconda3/envs/testbed", "/testbed/../../etc/passwd"]:
+        try:
+            editor.run(command="view", path=bad_path)
+            assert False, f"expected a ValueError for out-of-bounds path {bad_path!r}"
+        except ValueError:
+            pass
+
+
+def test_view_output_is_truncated(tmp_path):
+    editor = EditorTool(cwd=tmp_path)
+    editor.run(command="create", path="big.py", file_text="x = 1\n" * 2000)
+    view = editor.run(command="view", path="big.py")
+    assert len(view) < 6000
+    assert "chars omitted" in view

@@ -117,6 +117,17 @@ files. Four commands, dispatched on the `command` argument:
     appears in the file *exactly once*; raises otherwise (ambiguous edit) so
     Claude has to supply enough surrounding context to pin down the match.
   - `insert` — insert `new_str` as a new line after line `insert_line`.
+  - **Jailed to `cwd`** — every path (absolute or relative) is resolved and
+    checked to be `cwd` or a descendant of it; anything else raises instead
+    of being touched. This isn't docker-specific: a real run had the model
+    call `view` on `path="/"`, and since only `/testbed`-prefixed absolute
+    paths were remapped, `/` fell through to being followed *literally
+    against the host filesystem* — an unbounded `rglob` of the entire real
+    disk landed in a single `tool_result`, which then blew past the API's
+    request-size limit on the next turn and crashed the run. Also **capped
+    at 4000 chars** (head-only — `view_range` already gives a pagination
+    path for files, and a narrower subdirectory for directories) as
+    defense-in-depth against any other unexpectedly huge view.
 
 **`submit`** — a plain custom tool (`name`/`description`/`input_schema`, no
 special Anthropic type), unlike the other two. Takes one field, `summary`,
