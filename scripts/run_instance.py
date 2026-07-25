@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 from agent_harness.agent import Agent
 from agent_harness.swebench.loader import get_instance
 from agent_harness.swebench.setup_repo import prepare_repo
+from agent_harness.transcript import save_transcript
 
 
 def main() -> None:
@@ -29,6 +30,9 @@ def main() -> None:
     parser.add_argument("--workdir", default=None, help="defaults to a fresh temp dir")
     parser.add_argument("--max-turns", type=int, default=40)
     parser.add_argument("--output", default=None, help="path to append the prediction jsonl line to")
+    parser.add_argument(
+        "--quiet", action="store_true", help="don't print each step as the agent runs"
+    )
     args = parser.parse_args()
 
     instance = get_instance(args.instance_id, split=args.split, dataset=args.dataset)
@@ -36,13 +40,20 @@ def main() -> None:
     workdir = Path(args.workdir) if args.workdir else Path(tempfile.mkdtemp(prefix="agent-harness-"))
     repo_path = prepare_repo(instance, workdir)
 
-    agent = Agent(cwd=str(repo_path), max_turns=args.max_turns)
+    agent = Agent(cwd=str(repo_path), max_turns=args.max_turns, verbose=not args.quiet)
     task = f"{instance['problem_statement']}\n\nRepository: {instance['repo']}"
     result = agent.run(task)
     patch = agent.diff()
 
-    print(f"--- ran {result.turns} turn(s), stop_reason={result.stop_reason} ---")
+    # Saved next to (not inside) the repo checkout, so it doesn't show up in `git diff`.
+    transcript_path = workdir / f"{instance['instance_id']}.trajectory.json"
+    save_transcript(result.messages, transcript_path)
+
+    print(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason} ---")
     print(patch or "(no changes made)")
+    print(f"\nrepo checkout: {repo_path}")
+    print(f"full trajectory: {transcript_path}")
+    print(f"(view it with: python scripts/show_transcript.py {transcript_path})")
 
     if args.output:
         prediction = {

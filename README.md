@@ -99,10 +99,22 @@ cp .env.example .env   # then fill in ANTHROPIC_API_KEY
 
 ## Usage
 
-Run the agent on one SWE-bench instance and see the diff it produces:
+Run the agent on one SWE-bench instance and see the diff it produces. By
+default it prints each step live — assistant text, every tool call with its
+arguments, and every tool result (truncated if long) — so you can watch what
+the agent is actually doing turn by turn (pass `--quiet` to suppress this):
 
 ```bash
 python scripts/run_instance.py astropy__astropy-12907 --output preds.jsonl
+```
+
+The full trajectory (every message, untruncated) is also saved as JSON next
+to the repo checkout, so you can review it after the fact, e.g. to see
+exactly what a run did overnight, or to compare two runs of the same
+instance:
+
+```bash
+python scripts/show_transcript.py /path/to/<instance_id>.trajectory.json
 ```
 
 Run the tool unit tests (no API key needed):
