@@ -71,6 +71,14 @@ paths resolve against it, so `pkg/module.py` and `{workdir}/pkg/module.py`
 both reach the same file. The checkout exists nowhere else on the filesystem,
 so don't go hunting for it.
 
+Turn budget is what's scarce here, not shell commands — a single bash call
+can chain several searches (`grep ...; grep ...`, or one pattern with
+alternation), and you can issue more than one tool call in the same turn
+when they don't depend on each other's output. When you have several
+independent things to look up — a keyword in the source, the relevant test
+file, how tests are invoked — look them up together instead of spending a
+turn on each.
+
 Verify with the repository's own test suite, not with ad-hoc scripts. A
 `python -c` snippet speaks to one case; the test file tells you whether you
 broke anything else, and it is the only thing that counts as verification
