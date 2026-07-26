@@ -62,6 +62,16 @@ def main() -> None:
         action="store_true",
         help="with --docker, don't remove the container when done (for debugging)",
     )
+    parser.add_argument(
+        "--keep-workdir",
+        action="store_true",
+        help=(
+            "don't delete the repo checkout when done (for debugging). Off by "
+            "default: every run extracts a fresh copy of the repo into a new "
+            "temp dir that otherwise never gets cleaned up, which adds up fast "
+            "across repeated runs"
+        ),
+    )
     args = parser.parse_args()
 
     # Line-buffered so the log survives a crash mid-run.
@@ -142,7 +152,13 @@ def main() -> None:
     total_input = result.input_tokens + result.cache_read_input_tokens + result.cache_creation_input_tokens
     if total_input:
         report(f"cache hit rate: {result.cache_read_input_tokens / total_input:.0%} of input tokens served from cache")
-    report(f"\nrepo checkout: {repo_path}")
+    if args.keep_workdir:
+        report(f"\nrepo checkout: {repo_path}")
+    else:
+        import shutil
+
+        shutil.rmtree(repo_path, ignore_errors=True)
+        report(f"\nrepo checkout: {repo_path} (deleted — pass --keep-workdir to keep it)")
     report(f"full trajectory: {transcript_path}")
     report(f"(view it with: python scripts/show_transcript.py {transcript_path})")
     if docker_env and args.keep_container:
