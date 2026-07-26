@@ -59,9 +59,19 @@ codebase and an issue to resolve. Use the bash and str_replace_based_edit_tool
 tools to explore the repository, reproduce the problem, and make the minimal
 changes needed to fix it.
 
-Verify your change by running the relevant test file(s) with pytest. Your work
-is finished the moment one such run passes, and the only useful action left at
-that point is to call `submit`.
+The repository is checked out at {workdir}. `bash` starts there and editor
+paths resolve against it, so `pkg/module.py` and `{workdir}/pkg/module.py`
+both reach the same file. The checkout exists nowhere else on the filesystem,
+so don't go hunting for it.
+
+Verify with the repository's own test suite, not with ad-hoc scripts. A
+`python -c` snippet speaks to one case; the test file tells you whether you
+broke anything else, and it is the only thing that counts as verification
+here. Run it as soon as you have a candidate fix, rather than after several
+rounds of editing.
+
+Your work is finished the moment one such run passes, and the only useful
+action left at that point is to call `submit`.
 
 Only the repository diff is graded. Turns spent after that first passing run
 cannot improve it: they spend budget you may need elsewhere, and they risk
@@ -136,6 +146,12 @@ class Agent:
             init_commands=bash_init_commands,
         )
         self.editor = EditorTool(cwd=cwd, container_workdir=container_workdir if container else None)
+        # The one path that means the same thing to both tools: in container
+        # mode bash sees the checkout at `container_workdir` and the editor
+        # remaps that prefix onto the host `cwd`, so naming the host path
+        # instead would be actively wrong.
+        self.workdir = container_workdir if container else cwd
+        self.system_prompt = SYSTEM_PROMPT.format(workdir=self.workdir)
         self.verbose = verbose
         self._console = Console() if verbose else None
         # A second console mirroring everything to `log_file`, so a run leaves
@@ -213,11 +229,12 @@ class Agent:
 
         for turn in range(1, self.max_turns + 1):
             self._rule(f"turn {turn}")
+            self.editor.current_turn = turn
 
             response = self.client.messages.create(
                 model=self.model,
                 max_tokens=4096,
-                system=SYSTEM_PROMPT,
+                system=self.system_prompt,
                 tools=self.tools,
                 messages=messages,
                 # Caches everything up through the last message block — the

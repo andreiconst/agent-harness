@@ -11,6 +11,65 @@ def test_create_and_view(tmp_path):
     assert "2\tline2" in view
 
 
+def _numbered_file(tmp_path, name="a.py", n=400):
+    editor = EditorTool(cwd=tmp_path)
+    editor.run(command="create", path=name, file_text="".join(f"line{i}\n" for i in range(n)))
+    return editor
+
+
+def test_a_range_already_shown_is_suppressed(tmp_path):
+    # The real pattern from a debugging run: read a window, then re-read
+    # narrower windows inside it over and over.
+    editor = _numbered_file(tmp_path)
+    editor.current_turn = 8
+    wide = editor.run(command="view", path="a.py", view_range=[219, 350])
+    assert "line219" in wide
+
+    editor.current_turn = 21
+    for narrow in ([219, 248], [234, 250], [236, 262]):
+        result = editor.run(command="view", path="a.py", view_range=narrow)
+        assert "you viewed lines 219-350 of this file on turn 8" in result
+        assert "line240" not in result
+
+
+def test_a_range_extending_past_what_was_shown_is_not_suppressed(tmp_path):
+    editor = _numbered_file(tmp_path)
+    editor.run(command="view", path="a.py", view_range=[219, 350])
+
+    result = editor.run(command="view", path="a.py", view_range=[300, 400])
+    assert "line380" in result
+
+
+def test_an_edit_restores_the_full_view(tmp_path):
+    # The case that must never be suppressed: line numbers shift after an
+    # edit, so everything previously shown is stale.
+    editor = _numbered_file(tmp_path)
+    editor.run(command="view", path="a.py", view_range=[10, 20])
+    editor.run(command="str_replace", path="a.py", old_str="line15\n", new_str="CHANGED\n")
+
+    result = editor.run(command="view", path="a.py", view_range=[10, 20])
+    assert "CHANGED" in result
+    assert "already in your context" not in result
+
+
+def test_a_truncated_view_only_covers_what_it_delivered(tmp_path):
+    # A whole-file view of a big file gets cut off; the lines past the cut
+    # were never sent, so asking for them must return them.
+    editor = _numbered_file(tmp_path, n=2000)
+    whole = editor.run(command="view", path="a.py")
+    assert "more chars omitted" in whole
+
+    result = editor.run(command="view", path="a.py", view_range=[1500, 1520])
+    assert "line1510" in result
+
+
+def test_a_repeated_directory_listing_is_suppressed(tmp_path):
+    editor = _numbered_file(tmp_path)
+    first = editor.run(command="view", path=".")
+    assert "a.py" in first
+    assert "identical to the listing" in editor.run(command="view", path=".")
+
+
 def test_str_replace(tmp_path):
     editor = EditorTool(cwd=tmp_path)
     editor.run(command="create", path="a.py", file_text="x = 1\n")
