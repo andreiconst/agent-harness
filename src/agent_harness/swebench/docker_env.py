@@ -30,6 +30,8 @@ from swebench.harness.constants import DOCKER_USER, DOCKER_WORKDIR
 from swebench.harness.docker_build import build_container, setup_logger
 from swebench.harness.test_spec.test_spec import make_test_spec
 
+from .setup_repo import sanitize_git_history
+
 RUN_ID = "agent-harness"
 NAMESPACE = "swebench"  # matches run_evaluation.py's own default
 
@@ -86,6 +88,7 @@ def provision_container(instance: dict, workdir: Path) -> DockerEnv:
         check=True,
     )
     extractor.remove(force=True)
+    sanitize_git_history(repo_path)
 
     container_name = f"agent-harness-{instance['instance_id']}"
     try:
@@ -103,6 +106,12 @@ def provision_container(instance: dict, workdir: Path) -> DockerEnv:
         platform=test_spec.platform,
         cap_add=cap_add,
         volumes={str(repo_path.resolve()): {"bind": DOCKER_WORKDIR, "mode": "rw"}},
+        # No network: an agent with internet access can look up the real fix
+        # commit (GitHub search/commit APIs) and replay it instead of solving
+        # the issue, which is exactly what happened here on a rerun. The
+        # official SWE-bench eval harness runs test containers offline for
+        # the same reason.
+        network_mode="none",
     )
     return DockerEnv(
         container_name=container.name,
