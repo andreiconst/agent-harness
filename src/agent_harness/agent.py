@@ -17,6 +17,13 @@ from .tools.editor import EditorTool
 
 _TRUNCATE_AT = 2000
 
+# Per-response output cap. On models with adaptive thinking (Sonnet 5, Opus 5,
+# …) this budget covers thinking *and* the response text together, so a value
+# tuned for a non-thinking model truncates mid-turn. 16K is the largest that
+# comfortably stays under the SDK's non-streaming HTTP timeout; turns here
+# average a few hundred output tokens, so the cap is headroom, not a target.
+_MAX_TOKENS = 16000
+
 # Positive evidence that pytest ran and everything it collected passed. The
 # summary line lives at the very end of the output, which is why the bash tool
 # biases its truncation toward the tail for test runs.
@@ -233,7 +240,7 @@ class Agent:
 
             response = self.client.messages.create(
                 model=self.model,
-                max_tokens=4096,
+                max_tokens=_MAX_TOKENS,
                 system=self.system_prompt,
                 tools=self.tools,
                 messages=messages,

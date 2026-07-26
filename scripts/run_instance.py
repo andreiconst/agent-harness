@@ -15,6 +15,7 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 from agent_harness.agent import Agent
+from agent_harness.llm import DEFAULT_MODEL
 from agent_harness.swebench.loader import get_instance
 from agent_harness.swebench.setup_repo import prepare_repo
 from agent_harness.transcript import save_transcript
@@ -29,6 +30,11 @@ def main() -> None:
     parser.add_argument("--split", default="test")
     parser.add_argument("--workdir", default=None, help="defaults to a fresh temp dir")
     parser.add_argument("--max-turns", type=int, default=40)
+    parser.add_argument(
+        "--model",
+        default=DEFAULT_MODEL,
+        help=f"model id to run the agent on (default: {DEFAULT_MODEL})",
+    )
     parser.add_argument("--output", default=None, help="path to append the prediction jsonl line to")
     parser.add_argument(
         "--quiet", action="store_true", help="don't print each step as the agent runs"
@@ -93,6 +99,7 @@ def main() -> None:
 
     agent = Agent(
         cwd=str(repo_path),
+        model=args.model,
         max_turns=args.max_turns,
         verbose=not args.quiet,
         container=docker_env.container_name if docker_env else None,
@@ -112,7 +119,10 @@ def main() -> None:
     save_transcript(result.messages, transcript_path)
 
     status = f"submitted: {result.summary}" if result.submitted else "did not call submit"
-    report(f"\n--- ran {result.turns} turn(s), stop_reason={result.stop_reason}, {status} ---")
+    report(
+        f"\n--- {args.model}: ran {result.turns} turn(s), "
+        f"stop_reason={result.stop_reason}, {status} ---"
+    )
     if result.verified_turn is not None:
         tail = result.turns - result.verified_turn
         report(f"verified green on turn {result.verified_turn}; {tail} turn(s) spent after that")
