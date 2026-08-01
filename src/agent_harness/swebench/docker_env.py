@@ -69,12 +69,27 @@ def _bash_init_commands(test_spec) -> list[str]:
     ]
 
 
+def _remove_if_exists(client: docker.DockerClient, name: str) -> None:
+    """Drop a leftover container by name, if one is there."""
+    try:
+        client.containers.get(name).remove(force=True)
+    except docker.errors.NotFound:
+        pass
+
+
 def provision_container(instance: dict, workdir: Path) -> DockerEnv:
     client = docker.from_env()
     test_spec = make_test_spec(instance, namespace=NAMESPACE)
 
     log_path = workdir / f"{instance['instance_id']}.docker-build.log"
     logger = setup_logger(instance["instance_id"], log_path, add_stdout=False)
+
+    # A previous run that died between creating the extractor and removing it
+    # (Ctrl-C, a crash, a failed `docker cp`) leaves the name taken, and
+    # `build_container` then fails with a 409 name conflict that looks like an
+    # image-build error. Clear it first, the same way the long-lived container
+    # below is cleared.
+    _remove_if_exists(client, test_spec.get_instance_container_name(RUN_ID))
 
     # Builds (or, since namespace is set, pulls) the instance image and
     # creates — but does not start — a container from it. We only need this
@@ -83,18 +98,19 @@ def provision_container(instance: dict, workdir: Path) -> DockerEnv:
 
     repo_path = workdir / instance["instance_id"]
     repo_path.mkdir(parents=True, exist_ok=True)
-    subprocess.run(
-        ["docker", "cp", f"{extractor.name}:{DOCKER_WORKDIR}/.", str(repo_path)],
-        check=True,
-    )
-    extractor.remove(force=True)
+    try:
+        subprocess.run(
+            ["docker", "cp", f"{extractor.name}:{DOCKER_WORKDIR}/.", str(repo_path)],
+            check=True,
+        )
+    finally:
+        # Even if the copy failed: leaving it behind only guarantees the next
+        # run hits the name conflict this function just worked around.
+        extractor.remove(force=True)
     sanitize_git_history(repo_path)
 
     container_name = f"agent-harness-{instance['instance_id']}"
-    try:
-        client.containers.get(container_name).remove(force=True)
-    except docker.errors.NotFound:
-        pass
+    _remove_if_exists(client, container_name)
 
     cap_add = test_spec.docker_specs.get("run_args", {}).get("cap_add", [])
     container = client.containers.run(
